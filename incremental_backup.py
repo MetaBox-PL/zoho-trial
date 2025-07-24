@@ -7,7 +7,7 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 
 # Load environment variables from e.env (not .env)
-load_dotenv("e.env")
+load_dotenv()
 
 # Read MySQL and Drive credentials from env
 DB_HOST = os.getenv("DB_HOST")

@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # ===== LOAD ENVIRONMENT VARIABLES =====
-load_dotenv(dotenv_path='e.env')
+load_dotenv()
 
 DB_CONFIG = {
     'host': os.getenv('DB_HOST'),
@@ -16,10 +16,16 @@ DB_CONFIG = {
 }
 
 DEVICE_CONFIG = {
-    'ip': os.getenv('DEVICE_IP'),
-    'port': int(os.getenv('DEVICE_PORT')),
-    'password': int(os.getenv('DEVICE_PASSWORD'))
+    'ip': os.getenv('ZK_IP'),
+    'port': int(os.getenv('ZK_PORT')) if os.getenv('ZK_PORT') else None,
+    'password': int(os.getenv('ZK_PASSWORD')) if os.getenv('ZK_PASSWORD') else 0
 }
+
+# ===== SANITY CHECK =====
+for var in ['ZK_IP', 'ZK_PORT', 'ZK_PASSWORD', 'DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME']:
+    if not os.getenv(var):
+        logging.error(f"❌ Environment variable '{var}' is missing.")
+        exit(1)
 
 # ===== LOGGING SETUP =====
 def configure_logging():
@@ -109,14 +115,9 @@ def log_exists_in_raw(user_id, timestamp):
 def insert_attendance_to_db(record):
     conn = None
     try:
-        # If exists in attendance_logs, skip
         if log_exists_in_attendance(record['user_id'], record['timestamp']):
-            # Normal skip, do not log warning (to reduce noise)
             return
-        
-        # If exists in raw_device_logs but not in attendance_logs, assume cleaned by order_table.py, skip insert to attendance_logs
         if log_exists_in_raw(record['user_id'], record['timestamp']):
-            # Normal skip, do not log warning
             return
 
         conn = mysql.connector.connect(**DB_CONFIG)
@@ -151,7 +152,6 @@ def insert_raw_device_log(record):
     conn = None
     try:
         if log_exists_in_raw(record['user_id'], record['timestamp']):
-            # Normal skip, do not log warning
             return
 
         conn = mysql.connector.connect(**DB_CONFIG)
@@ -195,21 +195,17 @@ def get_attendance_records(ip, port, password):
         logging.info(f"📥 Fetched {len(attendance)} attendance records")
         logging.info(f"👤 Fetched {len(users)} users from device")
 
-        # Filter only new logs based on last device source timestamp and exclude logs already in raw_device_logs
         latest_timestamp = get_latest_device_timestamp()
         logging.info(f"📌 Filtering logs after: {latest_timestamp}")
         
-        filtered_logs = []
-        for log in attendance:
-            if log.timestamp > latest_timestamp:
-                if not log_exists_in_raw(log.user_id, log.timestamp):
-                    filtered_logs.append(log)
+        filtered_logs = [
+            log for log in attendance
+            if log.timestamp > latest_timestamp and not log_exists_in_raw(log.user_id, log.timestamp)
+        ]
 
         logging.info(f"🆕 {len(filtered_logs)} new records found")
 
-        # Sort by user then time
         filtered_logs.sort(key=lambda x: (x.user_id, x.timestamp))
-
         formatted_records = []
         status_tracker = {}
 
@@ -218,7 +214,6 @@ def get_attendance_records(ip, port, password):
             timestamp = record.timestamp
             name = user_map.get(user_id, "Unknown")
 
-            # Determine alternating status for this user
             if user_id not in status_tracker:
                 last_status = get_last_status(user_id)
                 current_status = 'Check-Out' if last_status == 'Check-In' else 'Check-In'
@@ -251,7 +246,6 @@ def get_attendance_records(ip, port, password):
 def main():
     configure_logging()
     records = get_attendance_records(**DEVICE_CONFIG)
-
     for idx, record in enumerate(records, 1):
         logging.info(
             f"📄 Record {idx}: User {record['user_id']} ({record['name']}) "
@@ -262,3 +256,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

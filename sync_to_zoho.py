@@ -5,7 +5,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 import logging
 
-load_dotenv("e.env")
+load_dotenv()
 
 DOMAIN = os.getenv("ZOHO_DOMAIN", "zoho.com")
 CLIENT_ID = os.getenv("ZOHO_CLIENT_ID")

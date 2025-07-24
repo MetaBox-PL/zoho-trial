@@ -1,15 +1,22 @@
-# Secrets
-e.env
-client_secrets.json
-zoho_tokens.json
-credentials.json
-
-# Backups and logs
-backups/
-last_backup_time.json
-*.log
-
-# Python cache and env
+cat > .gitignore <<EOF
+# Python
 __pycache__/
 *.pyc
+
+# Virtual env
 zk-env/
+venv/
+
+# Logs
+*.log
+
+# Environment files
+.env
+e.env
+auth_code.txt
+
+# Backups
+*.bak
+*.backup
+incremental_backup.json
+EOF
