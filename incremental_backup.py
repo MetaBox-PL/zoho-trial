@@ -5,24 +5,32 @@ from dotenv import load_dotenv
 import mysql.connector
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
+import logging
 
-# Load environment variables from e.env (not .env)
+# ====== LOGGING SETUP ======
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
+# ====== LOAD ENVIRONMENT ======
 load_dotenv()
 
-# Read MySQL and Drive credentials from env
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASS")  # Use DB_PASS from your e.env
+DB_PASSWORD = os.getenv("DB_PASS")
 DB_NAME = os.getenv("DB_NAME")
-GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")
+GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON", "client_secrets.json")
 
-# Backup settings
 BACKUP_DIR = "backups"
 LAST_BACKUP_FILE = "last_backup_time.json"
 TABLES = ["attendance_logs", "raw_device_logs", "raw_zoho_logs"]
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+# ====== LOAD LAST BACKUP TIMES ======
 def load_last_backup_times():
     if os.path.exists(LAST_BACKUP_FILE):
         with open(LAST_BACKUP_FILE, "r") as f:
@@ -33,6 +41,7 @@ def save_last_backup_times(times):
     with open(LAST_BACKUP_FILE, "w") as f:
         json.dump(times, f, indent=2)
 
+# ====== DATA FORMATTERS ======
 def format_value(value):
     if value is None:
         return "NULL"
@@ -50,12 +59,13 @@ def generate_insert_statements(table, columns, rows):
         values.append(f"({formatted})")
     return sql + ",\n".join(values) + ";\n"
 
+# ====== BACKUP TABLE ======
 def backup_table(cursor, table, last_time):
     query = f"SELECT * FROM `{table}` WHERE `timestamp` > %s ORDER BY `timestamp` ASC"
     cursor.execute(query, (last_time,))
     rows = cursor.fetchall()
     if not rows:
-        print(f"[!] No new rows in `{table}` since {last_time}")
+        logging.info(f"[!] No new rows in `{table}` since {last_time}")
         return None, last_time
 
     columns = [col[0] for col in cursor.description]
@@ -71,23 +81,39 @@ def backup_table(cursor, table, last_time):
         f.write(sql_data)
 
     new_last_time = str(rows[-1][columns.index("timestamp")])
-    print(f"[+] Backed up {len(rows)} rows from `{table}` to {filename}")
+    logging.info(f"[+] Backed up {len(rows)} rows from `{table}` to {filename}")
     return filepath, new_last_time
 
+# ====== UPLOAD TO GOOGLE DRIVE ======
 def upload_to_gdrive(filepath):
-    gauth = GoogleAuth()
-    gauth.LocalWebserverAuth()  # Only asks for login on first run
-    drive = GoogleDrive(gauth)
+    if not os.path.exists(GDRIVE_CREDENTIALS_JSON):
+        logging.error(
+            f"[ERROR] Google credentials JSON not found: {GDRIVE_CREDENTIALS_JSON}. "
+            f"Please set GDRIVE_CREDENTIALS_JSON in .env and place the file there."
+        )
+        return False
 
-    meta = {'title': os.path.basename(filepath)}
-    if GDRIVE_FOLDER_ID:
-        meta['parents'] = [{'id': GDRIVE_FOLDER_ID}]
+    try:
+        gauth = GoogleAuth()
+        gauth.LoadClientConfigFile(GDRIVE_CREDENTIALS_JSON)
+        gauth.LocalWebserverAuth()  # Asks for login on first run
+        drive = GoogleDrive(gauth)
 
-    file = drive.CreateFile(meta)
-    file.SetContentFile(filepath)
-    file.Upload()
-    print(f"[+] Uploaded {filepath} to Google Drive")
+        meta = {'title': os.path.basename(filepath)}
+        if GDRIVE_FOLDER_ID:
+            meta['parents'] = [{'id': GDRIVE_FOLDER_ID}]
 
+        file = drive.CreateFile(meta)
+        file.SetContentFile(filepath)
+        file.Upload()
+        logging.info(f"[+] Uploaded {filepath} to Google Drive")
+        return True
+
+    except Exception as e:
+        logging.error(f"[ERROR] Failed uploading {filepath} to Google Drive: {e}")
+        return False
+
+# ====== MAIN ======
 def main():
     last_times = load_last_backup_times()
     try:
@@ -101,17 +127,16 @@ def main():
 
         updated_times = last_times.copy()
         for table in TABLES:
-            print(f"\n=== Processing: {table} ===")
+            logging.info(f"\n=== Processing: {table} ===")
             filepath, new_time = backup_table(cursor, table, last_times.get(table, "1970-01-01 00:00:00"))
-            if filepath:
-                upload_to_gdrive(filepath)
+            if filepath and upload_to_gdrive(filepath):
                 updated_times[table] = new_time
 
         save_last_backup_times(updated_times)
-        print("\n✅ Incremental backup complete.")
+        logging.info("\n✅ Incremental backup complete.")
 
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logging.error(f"[ERROR] {e}")
 
 if __name__ == "__main__":
     main()
