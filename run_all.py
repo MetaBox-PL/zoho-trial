@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Optional startup delay (e.g., 10 seconds) to ensure system/mariadb is up
 logging.info("⏳ Waiting 10 seconds for system services to stabilize...")
-time.sleep(10)
+time.sleep(300)
 
 scripts = [
     ("insert_log_to_db.py", True),   # Must always run
