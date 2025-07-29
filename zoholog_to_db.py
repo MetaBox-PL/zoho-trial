@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import logging
 
 # ===== LOAD ENVIRONMENT VARIABLES =====
-load_dotenv("e.env")
+load_dotenv()
 
 # ===== CONFIGURATION =====
 DOMAIN = os.getenv("ZOHO_DOMAIN", "zoho.com")
