@@ -63,7 +63,7 @@ DROP TABLE IF EXISTS `raw_zoho_logs`;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `raw_zoho_logs` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) NOT NULL,
+  `user_id` varchar(20) NOT NULL,
   `name` varchar(255) NOT NULL,
   `timestamp` datetime NOT NULL,
   `punch_type` tinyint(1) NOT NULL,
