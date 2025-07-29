@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import logging
 
 # ===== LOAD ENVIRONMENT VARIABLES =====
-load_dotenv()
+load_dotenv("e.env")
 
 # ===== CONFIGURATION =====
 DOMAIN = os.getenv("ZOHO_DOMAIN", "zoho.com")
@@ -27,7 +27,7 @@ def configure_logging():
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('zoho_logs.log'),
+            logging.FileHandler("zoho_logs.log"),
             logging.StreamHandler()
         ]
     )
@@ -35,7 +35,7 @@ def configure_logging():
 # ===== GET ACCESS TOKEN =====
 def get_access_token():
     try:
-        response = requests.post(
+        res = requests.post(
             f"https://accounts.{DOMAIN}/oauth/v2/token",
             data={
                 "refresh_token": REFRESH_TOKEN,
@@ -45,8 +45,8 @@ def get_access_token():
             },
             timeout=10
         )
-        response.raise_for_status()
-        token = response.json()["access_token"]
+        res.raise_for_status()
+        token = res.json()["access_token"]
         logging.info("✅ Access token retrieved.")
         return token
     except Exception as e:
@@ -101,43 +101,23 @@ def log_exists_in_raw_zoho(user_id, timestamp, punch_type):
         logging.error(f"❌ Error checking raw_zoho_logs: {e}")
         return False
 
-# ===== GET DEVICE USER ID MAPPING =====
-def get_device_user_id(zoho_emp_id):
-    try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-        cursor.execute("SELECT zk_user_id FROM user_mapping WHERE zoho_emp_id = %s", (zoho_emp_id,))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return result[0] if result else 0
-    except Exception as e:
-        logging.error(f"❌ Error fetching user mapping for Zoho ID {zoho_emp_id}: {e}")
-        return 0
-
 # ===== INSERT LOG INTO DATABASE =====
 def insert_log_to_db(user_id, name, timestamp, status):
     punch_type = 0 if status == "Check-In" else 1
     conn = None
     try:
-        # Check duplicates in both tables
-        exists_in_attendance = log_exists_in_attendance(user_id, timestamp, punch_type)
-        exists_in_raw = log_exists_in_raw_zoho(user_id, timestamp, punch_type)
-
-        if exists_in_attendance or exists_in_raw:
-            # Skip silently
-            return False  # no insertion
+        if log_exists_in_attendance(user_id, timestamp, punch_type) or \
+           log_exists_in_raw_zoho(user_id, timestamp, punch_type):
+            return False  # Skip duplicates silently
 
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
 
-        # Insert into attendance_logs
         cursor.execute("""
             INSERT INTO attendance_logs (user_id, name, timestamp, punch_type, synced, source)
             VALUES (%s, %s, %s, %s, 1, 'zoho')
         """, (user_id, name, timestamp, punch_type))
 
-        # Insert into raw_zoho_logs
         cursor.execute("""
             INSERT INTO raw_zoho_logs (user_id, name, timestamp, punch_type, source)
             VALUES (%s, %s, %s, %s, 'zoho')
@@ -145,7 +125,7 @@ def insert_log_to_db(user_id, name, timestamp, status):
 
         conn.commit()
         logging.info(f"🟢 Inserted: {name} ({user_id}) - {status} at {timestamp}")
-        return True  # inserted
+        return True
     except Exception as e:
         logging.error(f"❌ Insert error for {name} at {timestamp}: {e}")
         return False
@@ -179,8 +159,8 @@ def fetch_zoho_attendance(token, from_date):
 
         for emp in data["response"].get("result", []):
             emp_id = emp.get("employeeId")
-            name = emp_id  # Or replace with actual name if available
-            user_id = get_device_user_id(emp_id)
+            name = emp_id  # You can later resolve full name from Zoho if needed
+            user_id = emp_id  # Directly use Zoho empId as user_id
 
             for entry in emp.get("entries", []):
                 for day_entry in entry.values():
@@ -189,16 +169,15 @@ def fetch_zoho_attendance(token, from_date):
                             timestamp = datetime.strptime(att["checkInTime"], "%d-%m-%Y %H:%M:%S")
                             if insert_log_to_db(user_id, name, timestamp, "Check-In"):
                                 inserted_count += 1
-
                         if "checkOutTime" in att:
                             timestamp = datetime.strptime(att["checkOutTime"], "%d-%m-%Y %H:%M:%S")
                             if insert_log_to_db(user_id, name, timestamp, "Check-Out"):
                                 inserted_count += 1
 
         if inserted_count == 0:
-            logging.info("🆕 0 new records found")
+            logging.info("🆕 0 new records found.")
         else:
-            logging.info(f"🆕 {inserted_count} new records found")
+            logging.info(f"🆕 {inserted_count} new records inserted.")
 
     except Exception as e:
         logging.error(f"❌ Error fetching Zoho attendance: {e}")
@@ -207,8 +186,8 @@ def fetch_zoho_attendance(token, from_date):
 def main():
     configure_logging()
     token = get_access_token()
-    last_sync = get_last_synced_timestamp()
-    fetch_zoho_attendance(token, last_sync)
+    from_date = get_last_synced_timestamp()
+    fetch_zoho_attendance(token, from_date)
     logging.info("✅ Zoho sync to database complete.")
 
 if __name__ == "__main__":
