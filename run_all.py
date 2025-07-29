@@ -10,8 +10,8 @@ PYTHON_EXECUTABLE = sys.executable
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Optional startup delay (e.g., 10 seconds) to ensure system/mariadb is up
-logging.info("⏳ Waiting 300 seconds for system services to stabilize...")
-time.sleep(300)
+logging.info("⏳ Waiting 2 minutes for system services to stabilize...")
+time.sleep(120)
 
 scripts = [
     ("insert_log_to_db.py", True),   # Must always run
