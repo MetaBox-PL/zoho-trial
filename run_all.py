@@ -10,7 +10,7 @@ PYTHON_EXECUTABLE = sys.executable
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Optional startup delay (e.g., 10 seconds) to ensure system/mariadb is up
-logging.info("⏳ Waiting 10 seconds for system services to stabilize...")
+logging.info("⏳ Waiting 300 seconds for system services to stabilize...")
 time.sleep(300)
 
 scripts = [
