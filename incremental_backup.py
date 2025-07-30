@@ -7,14 +7,12 @@ import mysql.connector
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 
-# ====== LOGGING SETUP ======
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()]
 )
 
-# ====== LOAD ENVIRONMENT ======
 load_dotenv()
 
 DB_HOST = os.getenv("DB_HOST")
@@ -22,35 +20,36 @@ DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASS")
 DB_NAME = os.getenv("DB_NAME")
 
-# Google Drive settings
 GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")
 GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON", "client_secrets.json")
+GDRIVE_CREDENTIALS_PICKLE = "gdrive_credentials.json"  # Token storage file
 
-# Backup configuration
 BACKUP_DIR = "backups"
 LAST_BACKUP_FILE = "last_backup_time.json"
 TABLES = ["attendance_logs", "raw_device_logs", "raw_zoho_logs"]
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
-# ====== LAST BACKUP TIMES ======
+
 def load_last_backup_times():
     if os.path.exists(LAST_BACKUP_FILE):
         with open(LAST_BACKUP_FILE, "r") as f:
             return json.load(f)
     return {table: "1970-01-01 00:00:00" for table in TABLES}
 
+
 def save_last_backup_times(times):
     with open(LAST_BACKUP_FILE, "w") as f:
         json.dump(times, f, indent=2)
 
-# ====== DATA FORMATTERS ======
+
 def format_value(value):
     if value is None:
         return "NULL"
     if isinstance(value, (int, float)):
         return str(value)
     return "'" + str(value).replace("'", "''") + "'"
+
 
 def generate_insert_statements(table, columns, rows):
     if not rows:
@@ -62,7 +61,7 @@ def generate_insert_statements(table, columns, rows):
         values.append(f"({formatted})")
     return sql + ",\n".join(values) + ";\n"
 
-# ====== BACKUP TABLE ======
+
 def backup_table(cursor, table, last_time):
     query = f"SELECT * FROM `{table}` WHERE `timestamp` > %s ORDER BY `timestamp` ASC"
     cursor.execute(query, (last_time,))
@@ -87,7 +86,7 @@ def backup_table(cursor, table, last_time):
     logging.info(f"[+] Backed up {len(rows)} rows from `{table}` to {filename}")
     return filepath, new_last_time
 
-# ====== GOOGLE DRIVE AUTH ======
+
 def authenticate_gdrive():
     if not os.path.exists(GDRIVE_CREDENTIALS_JSON):
         logging.error(f"[ERROR] Google credentials JSON not found: {GDRIVE_CREDENTIALS_JSON}")
@@ -96,12 +95,26 @@ def authenticate_gdrive():
     try:
         gauth = GoogleAuth()
         gauth.LoadClientConfigFile(GDRIVE_CREDENTIALS_JSON)
-        gauth.CommandLineAuth()
-        logging.info("Authentication successful.")
+
+        # Try loading saved credentials
+        if os.path.exists(GDRIVE_CREDENTIALS_PICKLE):
+            gauth.LoadCredentialsFile(GDRIVE_CREDENTIALS_PICKLE)
+
+        if gauth.credentials is None:
+            logging.info("No saved credentials, performing command line OAuth...")
+            gauth.CommandLineAuth()  # Interactive flow
+        elif gauth.access_token_expired:
+            logging.info("Credentials expired, refreshing...")
+            gauth.Refresh()
+        else:
+            logging.info("Using saved Google Drive credentials.")
+
+        gauth.SaveCredentialsFile(GDRIVE_CREDENTIALS_PICKLE)
         return GoogleDrive(gauth)
     except Exception as e:
         logging.error(f"[ERROR] Google Drive authentication failed: {e}")
         return None
+
 
 def upload_to_gdrive(drive, filepath):
     try:
@@ -117,7 +130,7 @@ def upload_to_gdrive(drive, filepath):
         logging.error(f"[ERROR] Failed uploading {filepath} to Google Drive: {e}")
         return False
 
-# ====== MAIN ======
+
 def main():
     last_times = load_last_backup_times()
     try:
@@ -129,9 +142,9 @@ def main():
         )
         cursor = conn.cursor()
 
-        # Authenticate once
         drive = authenticate_gdrive()
         if not drive:
+            logging.error("Google Drive auth failed, aborting backup.")
             return
 
         updated_times = last_times.copy()
@@ -146,6 +159,7 @@ def main():
 
     except Exception as e:
         logging.error(f"[ERROR] {e}")
+
 
 if __name__ == "__main__":
     main()
