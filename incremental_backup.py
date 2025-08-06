@@ -75,16 +75,16 @@ def backup_table(cursor, table, last_time):
     if not sql_data:
         return None, last_time
 
+    # Save new incremental backup locally (optional, for your local archive)
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{table}_increment_{now_str}.sql"
     filepath = os.path.join(BACKUP_DIR, filename)
-
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(sql_data)
 
     new_last_time = str(rows[-1][columns.index("timestamp")])
     logging.info(f"[+] Backed up {len(rows)} rows from `{table}` to {filename}")
-    return filepath, new_last_time
+    return sql_data, new_last_time  # return SQL string instead of file path
 
 
 def authenticate_gdrive():
@@ -116,19 +116,44 @@ def authenticate_gdrive():
         return None
 
 
-def upload_to_gdrive(drive, filepath):
+def find_drive_file(drive, filename):
+    query = f"title = '{filename}' and trashed=false"
+    file_list = drive.ListFile({'q': query}).GetList()
+    if file_list:
+        return file_list[0]
+    return None
+
+
+def download_drive_file_content(file):
     try:
-        meta = {'title': os.path.basename(filepath)}
-        if GDRIVE_FOLDER_ID:
-            meta['parents'] = [{'id': GDRIVE_FOLDER_ID}]
-        file = drive.CreateFile(meta)
-        file.SetContentFile(filepath)
-        file.Upload()
-        logging.info(f"[+] Uploaded {filepath} to Google Drive")
-        return True
+        file.GetContentFile("temp.sql")
+        with open("temp.sql", "r", encoding="utf-8") as f:
+            content = f.read()
+        os.remove("temp.sql")
+        return content
     except Exception as e:
-        logging.error(f"[ERROR] Failed uploading {filepath} to Google Drive: {e}")
-        return False
+        logging.error(f"[ERROR] Could not download file content: {e}")
+        return ""
+
+
+def upload_to_gdrive(drive, filename, content):
+    file = find_drive_file(drive, filename)
+    if file:
+        logging.info(f"Appending to existing Drive file: {filename}")
+        existing_content = download_drive_file_content(file)
+        new_content = existing_content + "\n" + content
+        file.SetContentString(new_content)
+        file.Upload()
+    else:
+        logging.info(f"Creating new Drive file: {filename}")
+        file_metadata = {'title': filename}
+        if GDRIVE_FOLDER_ID:
+            file_metadata['parents'] = [{'id': GDRIVE_FOLDER_ID}]
+        file = drive.CreateFile(file_metadata)
+        file.SetContentString(content)
+        file.Upload()
+    logging.info(f"[+] Uploaded backup to Google Drive as {filename}")
+    return True
 
 
 def main():
@@ -150,9 +175,11 @@ def main():
         updated_times = last_times.copy()
         for table in TABLES:
             logging.info(f"\n=== Processing: {table} ===")
-            filepath, new_time = backup_table(cursor, table, last_times.get(table, "1970-01-01 00:00:00"))
-            if filepath and upload_to_gdrive(drive, filepath):
-                updated_times[table] = new_time
+            sql_data, new_time = backup_table(cursor, table, last_times.get(table, "1970-01-01 00:00:00"))
+            if sql_data:
+                filename = f"{table}_incremental_backup.sql"
+                if upload_to_gdrive(drive, filename, sql_data):
+                    updated_times[table] = new_time
 
         save_last_backup_times(updated_times)
         logging.info("\n✅ Incremental backup complete.")
