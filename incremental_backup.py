@@ -51,15 +51,12 @@ def format_value(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def generate_insert_statements(table, columns, rows):
+def generate_insert_components(table, columns, rows):
     if not rows:
-        return ""
-    sql = f"INSERT INTO `{table}` ({', '.join(columns)}) VALUES\n"
-    values = []
-    for row in rows:
-        formatted = ", ".join(format_value(v) for v in row)
-        values.append(f"({formatted})")
-    return sql + ",\n".join(values) + ";\n"
+        return None, None
+    header = f"INSERT INTO `{table}` ({', '.join(columns)}) VALUES\n"
+    values = [f"({', '.join(format_value(v) for v in row)})" for row in rows]
+    return header, values
 
 
 def backup_table(cursor, table, last_time):
@@ -71,20 +68,19 @@ def backup_table(cursor, table, last_time):
         return None, last_time
 
     columns = [col[0] for col in cursor.description]
-    sql_data = generate_insert_statements(table, columns, rows)
-    if not sql_data:
+    header, values = generate_insert_components(table, columns, rows)
+    if not header or not values:
         return None, last_time
 
-    # Save new incremental backup locally (optional, for your local archive)
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{table}_increment_{now_str}.sql"
     filepath = os.path.join(BACKUP_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write(sql_data)
+        f.write(header + ",\n".join(values) + ";\n")
 
     new_last_time = str(rows[-1][columns.index("timestamp")])
     logging.info(f"[+] Backed up {len(rows)} rows from `{table}` to {filename}")
-    return sql_data, new_last_time  # return SQL string instead of file path
+    return (header, values), new_last_time
 
 
 def authenticate_gdrive():
@@ -96,13 +92,12 @@ def authenticate_gdrive():
         gauth = GoogleAuth()
         gauth.LoadClientConfigFile(GDRIVE_CREDENTIALS_JSON)
 
-        # Try loading saved credentials
         if os.path.exists(GDRIVE_CREDENTIALS_PICKLE):
             gauth.LoadCredentialsFile(GDRIVE_CREDENTIALS_PICKLE)
 
         if gauth.credentials is None:
             logging.info("No saved credentials, performing command line OAuth...")
-            gauth.CommandLineAuth()  # Interactive flow
+            gauth.CommandLineAuth()
         elif gauth.access_token_expired:
             logging.info("Credentials expired, refreshing...")
             gauth.Refresh()
@@ -119,9 +114,7 @@ def authenticate_gdrive():
 def find_drive_file(drive, filename):
     query = f"title = '{filename}' and trashed=false"
     file_list = drive.ListFile({'q': query}).GetList()
-    if file_list:
-        return file_list[0]
-    return None
+    return file_list[0] if file_list else None
 
 
 def download_drive_file_content(file):
@@ -136,22 +129,36 @@ def download_drive_file_content(file):
         return ""
 
 
-def upload_to_gdrive(drive, filename, content):
+def upload_to_gdrive(drive, filename, insert_components):
+    header, new_rows = insert_components
     file = find_drive_file(drive, filename)
+
     if file:
         logging.info(f"Appending to existing Drive file: {filename}")
-        existing_content = download_drive_file_content(file)
-        new_content = existing_content + "\n" + content
+        existing_content = download_drive_file_content(file).strip()
+
+        # Remove trailing semicolon if present
+        if existing_content.endswith(";"):
+            existing_content = existing_content[:-1].strip()
+
+        new_content = existing_content
+        if new_rows:
+            if not existing_content.endswith(")"):
+                new_content += "\n"
+            new_content += ",\n" + ",\n".join(new_rows) + ";\n"
+
         file.SetContentString(new_content)
         file.Upload()
     else:
         logging.info(f"Creating new Drive file: {filename}")
+        content = header + ",\n".join(new_rows) + ";\n"
         file_metadata = {'title': filename}
         if GDRIVE_FOLDER_ID:
             file_metadata['parents'] = [{'id': GDRIVE_FOLDER_ID}]
         file = drive.CreateFile(file_metadata)
         file.SetContentString(content)
         file.Upload()
+
     logging.info(f"[+] Uploaded backup to Google Drive as {filename}")
     return True
 
@@ -175,10 +182,10 @@ def main():
         updated_times = last_times.copy()
         for table in TABLES:
             logging.info(f"\n=== Processing: {table} ===")
-            sql_data, new_time = backup_table(cursor, table, last_times.get(table, "1970-01-01 00:00:00"))
-            if sql_data:
+            insert_components, new_time = backup_table(cursor, table, last_times.get(table, "1970-01-01 00:00:00"))
+            if insert_components:
                 filename = f"{table}_incremental_backup.sql"
-                if upload_to_gdrive(drive, filename, sql_data):
+                if upload_to_gdrive(drive, filename, insert_components):
                     updated_times[table] = new_time
 
         save_last_backup_times(updated_times)
