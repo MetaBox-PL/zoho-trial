@@ -1,3 +1,8 @@
+#-- make sure the file has the permission to run --#
+#-- if not run the command: chmod +x <filename> --#
+#-- the do ./<filename> --#
+#-- or you can just run: bash <filename> --#
+
 #!/bin/bash
 set -e
 
@@ -85,7 +90,7 @@ DB_PASS=<password>
 
 ###GOOGLE DRIVE BACKUP###
 GDRIVE_FOLDER_ID=1iaFKuYSaUYrEYoivqAhBjB3dnCHU32Vi
-GDRIVE_CREDENTIALS_JSON=../client_secret_456700935096-hltqfjul88qu0kcr6vrtef6v2lqe6gqm.apps.googleusercontent.com.json
+GDRIVE_CREDENTIALS_JSON=<path_to_the_file>
 EOF
 
 echo "✅ .env created."
